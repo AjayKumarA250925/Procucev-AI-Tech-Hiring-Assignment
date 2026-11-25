@@ -134,7 +134,8 @@ edit, search and delete, and mobile layout.
 
 ## Deploying
 
-* **Render:** `render.yaml` is a Blueprint that creates a free PostgreSQL
+* **Render:** [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/AjayKumarA250925/Procucev-AI-Tech-Hiring-Assignment)
+  `render.yaml` is a Blueprint that creates a free PostgreSQL
   database and the Docker web service. Set `GEMINI_API_KEY` in the
   dashboard. The free plan's 512 MB of RAM fits Whisper `tiny` at most, so use
   Gemini there, or a larger plan for Whisper `small`.
