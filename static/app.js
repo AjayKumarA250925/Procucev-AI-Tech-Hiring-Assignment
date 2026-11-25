@@ -102,7 +102,7 @@ function setMicState(state) {
 function addFinal(text, language) {
   text = (text || "").trim();
   if (text) live.finals.push(text);
-  if (language) live.languages.add(language.split("-")[0]);
+  (language || "").split(",").forEach((l) => l && live.languages.add(l.trim().split("-")[0]));
   live.interim = "";
   renderTranscript();
 }

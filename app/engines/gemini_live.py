@@ -48,6 +48,16 @@ class GeminiLiveEngine(StreamingEngine):
             system_instruction="You are a silent listener. Never respond.",
         )
 
+    def guess_language(self, text: str) -> str:
+        """Fallback when Gemini sends no language code: infer from the script."""
+        if self.language == "hi-en":
+            return "hi,en"  # Hinglish is often written entirely in Latin script
+        if self.language != "auto":
+            return self.language
+        devanagari = any("\u0900" <= c <= "\u097f" for c in text)
+        latin = any(c.isascii() and c.isalpha() for c in text)
+        return ",".join(code for code, hit in (("hi", devanagari), ("en", latin)) if hit)
+
     async def run(self, audio: AudioQueue, emit: Emit) -> None:
         client = genai.Client(api_key=self.api_key, http_options={"api_version": "v1beta"})
         try:
@@ -80,10 +90,12 @@ class GeminiLiveEngine(StreamingEngine):
                         await emit({"type": "interim", "text": sc.interim_input_transcription.text})
                     if sc.input_transcription and sc.input_transcription.text:
                         last_activity = time.monotonic()
+                        text = sc.input_transcription.text
                         await emit({
                             "type": "final",
-                            "text": sc.input_transcription.text,
-                            "language": sc.input_transcription.language_code or "",
+                            "text": text,
+                            "language": sc.input_transcription.language_code
+                            or self.guess_language(text),
                         })
 
         sender = asyncio.create_task(send())

@@ -63,3 +63,14 @@ def test_gemini_config_builder():
     cfg = GeminiLiveEngine("k", "gemini-3.1-flash-live-preview", "auto").build_config()
     assert cfg.response_modalities == ["AUDIO"]
     assert cfg.input_audio_transcription.language_codes is None
+
+
+def test_gemini_language_fallback():
+    from app.engines.gemini_live import GeminiLiveEngine
+
+    auto = GeminiLiveEngine("k", "m", "auto")
+    assert auto.guess_language("नमस्ते, how are you?") == "hi,en"
+    assert auto.guess_language("मेरा नाम राहुल है।") == "hi"
+    assert auto.guess_language("Please send the report.") == "en"
+    assert GeminiLiveEngine("k", "m", "hi-en").guess_language("Kal ki meeting") == "hi,en"
+    assert GeminiLiveEngine("k", "m", "ta").guess_language("x") == "ta"
