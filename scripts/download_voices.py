@@ -12,6 +12,7 @@ VOICES = [
     "hi/hi_IN/priyamvada/medium/hi_IN-priyamvada-medium",
     "hi/hi_IN/pratham/medium/hi_IN-pratham-medium",
     "en/en_US/lessac/medium/en_US-lessac-medium",
+    "en/en_US/ryan/medium/en_US-ryan-medium",
 ]
 
 target = Path(sys.argv[1] if len(sys.argv) > 1 else ".cache/piper")

@@ -53,19 +53,26 @@ GEMINI_RATE = 24_000
 GEMINI_TIMEOUT_S = 15   # max wait for the first audio (and between chunks)
 GEMINI_TTS_MODELS = ("gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts")
 
-# Piper voices (https://huggingface.co/rhasspy/piper-voices). Text containing
-# Devanagari is read by the chosen Hindi voice; Latin-only text by the English one.
+# Piper voices (https://huggingface.co/rhasspy/piper-voices). Text is read
+# sentence by sentence: sentences containing Devanagari use the chosen Hindi
+# voice, Latin-only (English) sentences use an English voice of the same gender
+# (a Hindi voice garbles English sentences).
 PIPER_VOICES = {
     "hi_IN-priyamvada-medium": "Priyamvada (Hindi, female)",
     "hi_IN-pratham-medium": "Pratham (Hindi, male)",
 }
-PIPER_ENGLISH_VOICE = "en_US-lessac-medium"
-PIPER_RATE = 22_050  # all three "medium" voices
+PIPER_ENGLISH_FOR = {
+    "hi_IN-priyamvada-medium": "en_US-lessac-medium",
+    "hi_IN-pratham-medium": "en_US-ryan-medium",
+}
+PIPER_RATE = 22_050  # all "medium" voices
 _PIPER_PATHS = {
     "hi_IN-priyamvada-medium": "hi/hi_IN/priyamvada/medium",
     "hi_IN-pratham-medium": "hi/hi_IN/pratham/medium",
     "en_US-lessac-medium": "en/en_US/lessac/medium",
+    "en_US-ryan-medium": "en/en_US/ryan/medium",
 }
+_SENTENCE_END = re.compile(r"(?<=[.!?\u0964\u0965])\s+")
 _PIPER_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/{path}/{name}.{ext}"
 
 MAX_CHARS = 4000
@@ -273,14 +280,19 @@ def _piper_voice(name: str, voices_dir: str, max_loaded: int = 3):
         return voice
 
 
+def split_sentences(text: str) -> list[str]:
+    return [part for part in _SENTENCE_END.split(text) if part.strip()]
+
+
 def piper_chunks(text: str, voice: str, voices_dir: str, max_loaded: int = 3) -> Iterator[bytes]:
     """Yield 22.05 kHz PCM sentence by sentence (first audio in ~30 ms)."""
     if voice not in PIPER_VOICES:
         voice = next(iter(PIPER_VOICES))
-    name = voice if has_devanagari(text) else PIPER_ENGLISH_VOICE
-    model = _piper_voice(name, voices_dir, max_loaded)
-    for chunk in model.synthesize(text):
-        yield chunk.audio_int16_bytes
+    for sentence in split_sentences(text):
+        name = voice if has_devanagari(sentence) else PIPER_ENGLISH_FOR[voice]
+        model = _piper_voice(name, voices_dir, max_loaded)
+        for chunk in model.synthesize(sentence):
+            yield chunk.audio_int16_bytes
 
 
 def piper_tts_sync(text: str, voice: str, voices_dir: str, max_loaded: int = 3) -> bytes:
@@ -288,7 +300,7 @@ def piper_tts_sync(text: str, voice: str, voices_dir: str, max_loaded: int = 3) 
 
 
 def preload_piper(voices_dir: str, max_loaded: int = 3) -> None:
-    for name in [*PIPER_VOICES, PIPER_ENGLISH_VOICE][:max_loaded]:
+    for name in list(_PIPER_PATHS)[:max_loaded]:
         _piper_voice(name, voices_dir, max_loaded)
 
 

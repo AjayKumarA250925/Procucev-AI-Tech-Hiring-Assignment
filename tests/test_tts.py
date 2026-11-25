@@ -198,3 +198,24 @@ def test_piper_stream_matches_download(client):
     assert len(pcm) / 2 / 22050 > 2  # > 2 s of speech
     wav = client.post("/api/tts", json=body).content  # served from the cache
     assert tts._unwav(wav) == (22050, pcm)
+
+
+def test_piper_uses_matching_english_voice_per_sentence(monkeypatch):
+    used = []
+
+    class FakeVoice:
+        def __init__(self, name):
+            self.name = name
+
+        def synthesize(self, sentence):
+            used.append((self.name, sentence))
+            yield type("Chunk", (), {"audio_int16_bytes": b"\x00\x00"})
+
+    monkeypatch.setattr(tts, "_piper_voice", lambda name, *a: FakeVoice(name))
+    text = "नमस्ते दोस्तों! Please send the report. कल मिलते हैं।"
+    list(tts.piper_chunks(text, "hi_IN-pratham-medium", "unused"))
+    assert used == [
+        ("hi_IN-pratham-medium", "नमस्ते दोस्तों!"),
+        ("en_US-ryan-medium", "Please send the report."),  # male Hindi voice -> male English voice
+        ("hi_IN-pratham-medium", "कल मिलते हैं।"),
+    ]

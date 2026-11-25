@@ -29,7 +29,7 @@ Dashboard.
 
 | Voice engine | Where it runs | Notes |
 | --- | --- | --- |
-| **Piper** (default, self-hosted, open source) | This server's CPU | [Piper](https://github.com/OHF-Voice/piper1-gpl) Hindi voices *Priyamvada* (female) and *Pratham* (male). English-only text uses an English voice. Unlimited, and sound starts in about 0.1 s. |
+| **Piper** (default, self-hosted, open source) | This server's CPU | [Piper](https://github.com/OHF-Voice/piper1-gpl) Hindi voices *Priyamvada* (female) and *Pratham* (male). Text is read sentence by sentence: English sentences switch to a matching English voice (*Lessac* or *Ryan*), because a Hindi voice garbles them. Unlimited, and sound starts in about 0.1 s. |
 | **Gemini TTS** | Google cloud, same key | 30 voices, the most natural, handles Hindi, English and mixed text. Uses `gemini-3.8-flash-lite-tts`, falling back to `gemini-3.8-flash-tts`. **The free tier allows only 10 requests per day per model**, so when the limit is hit the app says so (with the reset time) and switches to Piper in under a second. |
 | **Browser** | The user's device | `speechSynthesis`. Free, and the last fallback. |
 

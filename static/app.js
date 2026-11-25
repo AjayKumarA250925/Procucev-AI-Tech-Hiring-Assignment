@@ -42,7 +42,8 @@ const fmtClock = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String
 // Server voices are streamed: raw PCM chunks are scheduled on a Web Audio
 // clock as they arrive, so playback starts after the first chunk instead of
 // after the whole file has been generated.
-const tts = { button: null, abort: null, ctx: null, firstAudioMs: null };
+const tts = { button: null, abort: null, ctx: null, session: null, sources: [], utterances: [] };
+const SENTENCE_END = /(?<=[.!?\u0964\u0965])\s+/;
 
 function ttsSettings() {
   return {
@@ -51,9 +52,24 @@ function ttsSettings() {
   };
 }
 
+// One AudioContext for the whole page, created/resumed inside the click handler:
+// strict browsers (Safari, mobile, some Chrome setups) only allow audio that
+// was started by a user gesture, and an await before creating it loses that.
+function unlockAudio() {
+  if (!tts.ctx || tts.ctx.state === "closed") tts.ctx = new AudioContext();
+  if (tts.ctx.state === "suspended") tts.ctx.resume().catch(() => {});
+  return tts.ctx;
+}
+
 function stopSpeaking() {
   if (tts.abort) { tts.abort.abort(); tts.abort = null; }
-  if (tts.ctx) { tts.ctx.close().catch(() => {}); tts.ctx = null; }
+  tts.session = null;
+  for (const src of tts.sources) {
+    src.onended = null;
+    try { src.stop(); } catch { /* already stopped */ }
+  }
+  tts.sources = [];
+  tts.utterances = [];
   if ("speechSynthesis" in window) speechSynthesis.cancel();
   if (tts.button) { tts.button.textContent = tts.button.dataset.label; tts.button = null; }
 }
@@ -65,16 +81,30 @@ function setSpeakingButton(btn, label) {
   tts.button = btn;
 }
 
+// Built-in voices. Spoken one sentence per utterance: long utterances are cut
+// short by Chrome (notably with Linux speech-dispatcher voices).
 function browserSpeak(text, btn) {
   if (!("speechSynthesis" in window)) throw new Error("This browser cannot speak text.");
-  const u = new SpeechSynthesisUtterance(text);
-  // Devanagari script -> Hindi voice, otherwise Indian English (reads Hinglish well).
-  u.lang = /[\u0900-\u097F]/.test(text) ? "hi-IN" : "en-IN";
-  const voice = speechSynthesis.getVoices().find((v) => v.lang.replace("_", "-") === u.lang);
-  if (voice) u.voice = voice;
-  u.onend = u.onerror = () => { if (tts.button === btn) stopSpeaking(); };
+  const voices = speechSynthesis.getVoices();
+  const pick = (lang) =>
+    voices.find((v) => v.lang.replace("_", "-") === lang) ||
+    voices.find((v) => v.lang.toLowerCase().startsWith(lang.slice(0, 2)));
+  const parts = text.split(SENTENCE_END).filter((p) => p.trim());
+  const utterances = parts.map((part) => {
+    const u = new SpeechSynthesisUtterance(part);
+    u.lang = /[\u0900-\u097F]/.test(part) ? "hi-IN" : "en-IN";
+    const voice = pick(u.lang);
+    if (voice) u.voice = voice;
+    return u;
+  });
+  if (!utterances.length) return;
+  const session = {};
+  tts.session = session;
+  tts.utterances = utterances; // keep references: Chrome stops speech if they are garbage-collected
+  utterances[utterances.length - 1].onend = () => { if (tts.session === session) stopSpeaking(); };
   setSpeakingButton(btn, "⏹ Stop");
-  speechSynthesis.speak(u);
+  // Chrome drops speech queued right after cancel(); give it a moment.
+  setTimeout(() => { if (tts.session === session) utterances.forEach((u) => speechSynthesis.speak(u)); }, 80);
 }
 
 async function errorDetail(res) {
@@ -96,7 +126,9 @@ async function fetchSpeech(text) {
 }
 
 async function streamSpeech(text, engine, voice, btn) {
-  const started = performance.now();
+  const session = {};
+  tts.session = session;
+  const ctx = unlockAudio();
   const ctrl = new AbortController();
   tts.abort = ctrl;
   const res = await fetch("/api/tts/stream", {
@@ -107,8 +139,6 @@ async function streamSpeech(text, engine, voice, btn) {
   });
   if (!res.ok) throw new Error(await errorDetail(res));
   const rate = Number(res.headers.get("X-Sample-Rate")) || 24000;
-  const ctx = new AudioContext();
-  tts.ctx = ctx;
   if (ctx.state === "suspended") await ctx.resume();
 
   const minBytes = Math.round(rate * 0.12) * 2; // schedule >= 120 ms at a time (no clicks)
@@ -124,20 +154,18 @@ async function streamSpeech(text, engine, voice, btn) {
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(ctx.destination);
-    at = Math.max(at, ctx.currentTime + 0.03);
+    at = Math.max(at, ctx.currentTime + 0.1); // small lead so slow devices never underrun
     src.start(at);
     at += buffer.duration;
-    if (!last) {
-      tts.firstAudioMs = Math.round(performance.now() - started);
-      setSpeakingButton(btn, "⏹ Stop");
-    }
+    tts.sources.push(src);
+    if (!last) setSpeakingButton(btn, "⏹ Stop");
     last = src;
   };
 
   const reader = res.body.getReader();
   for (;;) {
     const { done, value } = await reader.read();
-    if (tts.ctx !== ctx) return; // stopped by the user
+    if (tts.session !== session) return; // stopped by the user
     if (value) {
       const merged = new Uint8Array(pending.length + value.length);
       merged.set(pending);
@@ -152,7 +180,7 @@ async function streamSpeech(text, engine, voice, btn) {
     if (done) break;
   }
   tts.abort = null;
-  const finish = () => { if (tts.ctx === ctx) stopSpeaking(); };
+  const finish = () => { if (tts.session === session) stopSpeaking(); };
   if (!last || at <= ctx.currentTime) finish();
   else last.onended = finish;
 }
@@ -164,6 +192,7 @@ async function speak(text, btn = null) {
   const { engine, voice } = ttsSettings();
   try {
     if (engine === "browser") return browserSpeak(text, btn);
+    unlockAudio(); // must happen synchronously inside the click
     setSpeakingButton(btn, "⏳");
     await streamSpeech(text, engine, voice, btn);
   } catch (err) {
