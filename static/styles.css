@@ -81,6 +81,8 @@ select, input, textarea {
   border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px;
 }
 textarea { resize: vertical; font-size: 1rem; line-height: 1.6; }
+select, input, textarea { max-width: 100%; min-width: 0; }
+.field { min-width: 0; }
 select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .toggle { display: flex; align-items: center; gap: 8px; font-size: .9rem; color: var(--muted); cursor: pointer; }
 .toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
@@ -138,6 +140,19 @@ select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); ou
   background: var(--accent-soft); color: var(--accent);
 }
 
+/* Text to speech */
+.speak-stage { padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.speak-stage textarea { width: 100%; min-height: 180px; font-size: 1.15rem; padding: 14px 16px; background: var(--surface-2); border-radius: 12px; }
+.speak-meta { display: flex; gap: 12px; align-items: baseline; }
+.examples { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip-btn {
+  font: inherit; font-size: .82rem; font-weight: 600; padding: 4px 12px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+}
+.chip-btn:hover { color: var(--text); border-color: var(--accent); }
+.tab-short { display: none; }
+#speakCount { white-space: nowrap; }
+
 /* Dashboard */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
 .stat { padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -186,6 +201,17 @@ dialog h3 { margin: 6px 0 -4px; font-size: .8rem; text-transform: uppercase; let
 @media (max-width: 640px) {
   .topbar { padding: 10px 16px; gap: 10px; }
   .brand span:last-child { display: none; }
+  .tabs { margin-left: 0; }
+  .tab { padding: 6px 9px; font-size: .88rem; }
+  .tab-long { display: none; }
+  .tab-short { display: inline; }
+  .icon-btn { margin-left: auto; flex: none; }
+}
+@media (max-width: 480px) {
+  .brand { display: none; }
+  .tabs { flex: 1; min-width: 0; }
+  .tab { flex: 1; padding: 6px 4px; font-size: .84rem; white-space: nowrap; }
+  .speak-stage .stage-actions .btn { flex: 1 1 auto; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .transcript { font-size: 1.05rem; }
   .item-head { flex-direction: column; gap: 0; }

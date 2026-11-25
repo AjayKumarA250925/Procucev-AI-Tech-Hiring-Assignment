@@ -120,7 +120,7 @@ async function downloadSpeech(text, title, btn) {
     const blob = await fetchSpeech(text);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = (title || "speech").replace(/[^\p{L}\p{N} _-]+/gu, "").trim().slice(0, 60) + ".wav";
+    a.download = (title || "speech").replace(/[^\p{L}\p{M}\p{N} _-]+/gu, "").trim().slice(0, 60) + ".wav";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } catch (err) {
@@ -137,7 +137,9 @@ document.querySelectorAll(".tab").forEach((tab) =>
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
     document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
     $(`view-${tab.dataset.view}`).classList.remove("hidden");
+    stopSpeaking();
     if (tab.dataset.view === "history") loadHistory();
+    if (tab.dataset.view === "speak") $("speakText").focus();
   })
 );
 
@@ -563,31 +565,95 @@ $("settingsSave").addEventListener("click", () => {
   store.set("gemini_model", $("modelInput").value.trim());
   store.set("tts_engine", $("ttsEngineSelect").value);
   store.set("tts_voice", $("ttsVoiceSelect").value);
+  syncSpeakPickers();
   toast("Settings saved");
   setTimeout(updateEngineHint, 0);
 });
 
-function fillVoiceOptions(engine, selected = "") {
+const VOICE_HINTS = {
+  gemini: "Natural cloud voices. Hindi, English and mixed text, detected automatically.",
+  piper: "Open-source voices running on this server (Piper). Hindi text uses the voice you pick; English-only text uses an English voice.",
+  browser: "Free voices built into this device. Quality depends on the device and browser.",
+};
+
+// Fill an engine + voice picker pair (used by Settings and the Text to Speech tab).
+function fillVoiceOptions(engine, selected = "", ids = ["ttsEngineSelect", "ttsVoiceSelect", "ttsHint"]) {
+  const [engineId, voiceId, hintId] = ids;
   const tts = config.tts || {};
-  const engines = $("ttsEngineSelect");
+  const engines = $(engineId);
   if (!tts.piper?.enabled) engines.querySelector('[value="piper"]')?.remove();
   if (![...engines.options].some((o) => o.value === engine)) engine = "browser";
   engines.value = engine;
   const voices = engine === "browser" ? { auto: "Device voice (picked by language)" } : (tts[engine]?.voices || {});
-  $("ttsVoiceSelect").innerHTML = Object.entries(voices)
+  $(voiceId).innerHTML = Object.entries(voices)
     .map(([k, v]) => `<option value="${escapeHtml(k)}">${escapeHtml(v)}</option>`).join("");
-  if (selected && voices[selected]) $("ttsVoiceSelect").value = selected;
-  $("ttsHint").textContent = {
-    gemini: "Natural cloud voices. Hindi, English and mixed text, detected automatically.",
-    piper: "Open-source voices running on this server (Piper). Hindi text uses the voice you pick; English-only text uses an English voice.",
-    browser: "Free voices built into this device. Quality depends on the device and browser.",
-  }[engine];
+  if (selected && voices[selected]) $(voiceId).value = selected;
+  $(hintId).textContent = VOICE_HINTS[engine];
 }
 $("ttsEngineSelect").addEventListener("change", (e) => fillVoiceOptions(e.target.value));
 $("ttsTestBtn").addEventListener("click", (e) => {
   store.set("tts_engine", $("ttsEngineSelect").value);
   store.set("tts_voice", $("ttsVoiceSelect").value);
+  syncSpeakPickers();
   speak("नमस्ते! Kal ki meeting दस बजे है, please late मत होना.", e.currentTarget);
+});
+
+// ---------------------------------------------------------------- text to speech tab
+const SPEAK_IDS = ["speakEngine", "speakVoice", "speakHint"];
+
+function syncSpeakPickers() {
+  fillVoiceOptions(store.get("tts_engine", "gemini"), store.get("tts_voice"), SPEAK_IDS);
+}
+
+function speakTextValue() {
+  return $("speakText").value.trim();
+}
+
+function updateSpeakButtons() {
+  const text = speakTextValue();
+  $("speakCount").textContent = `${$("speakText").value.length} / 4000`;
+  ["speakPlay", "speakDownload", "speakSave", "speakClear"].forEach((id) => ($(id).disabled = !text));
+}
+
+$("speakEngine").addEventListener("change", (e) => {
+  fillVoiceOptions(e.target.value, "", SPEAK_IDS);
+  store.set("tts_engine", $("speakEngine").value);
+  store.set("tts_voice", $("speakVoice").value);
+});
+$("speakVoice").addEventListener("change", (e) => store.set("tts_voice", e.target.value));
+$("speakText").addEventListener("input", updateSpeakButtons);
+$("speakText").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && speakTextValue()) speak(speakTextValue(), $("speakPlay"));
+});
+document.querySelectorAll("[data-example]").forEach((b) =>
+  b.addEventListener("click", () => {
+    $("speakText").value = b.dataset.example;
+    updateSpeakButtons();
+    $("speakText").focus();
+  })
+);
+$("speakPlay").addEventListener("click", (e) => speak(speakTextValue(), e.currentTarget));
+$("speakDownload").addEventListener("click", (e) => {
+  const text = speakTextValue();
+  downloadSpeech(text, text.split(/\s+/).slice(0, 6).join(" "), e.currentTarget);
+});
+$("speakClear").addEventListener("click", () => {
+  stopSpeaking();
+  $("speakText").value = "";
+  updateSpeakButtons();
+  $("speakText").focus();
+});
+$("speakSave").addEventListener("click", async () => {
+  try {
+    const text = speakTextValue();
+    const row = await api("/api/transcriptions", {
+      method: "POST",
+      body: { text, engine: "manual", language: /[\u0900-\u097F]/.test(text) ? "hi" : null },
+    });
+    toast(`Saved “${row.title}”`);
+  } catch (err) {
+    toast("Could not save: " + err.message, true);
+  }
 });
 
 // ---------------------------------------------------------------- boot
@@ -605,5 +671,7 @@ $("ttsTestBtn").addEventListener("click", (e) => {
   setMicState("idle");
   updateEngineHint();
   renderTranscript();
+  syncSpeakPickers();
+  updateSpeakButtons();
   if ("speechSynthesis" in window) speechSynthesis.getVoices(); // warm up voice list
 })();

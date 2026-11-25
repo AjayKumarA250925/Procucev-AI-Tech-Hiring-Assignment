@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     default_engine: str = "gemini"
 
     # Text-to-speech
-    gemini_tts_model: str = "gemini-3.8-flash-tts"  # or gemini-3.8-flash-lite-tts
+    # Falls back to the other Gemini TTS model automatically if this one hangs.
+    gemini_tts_model: str = "gemini-3.8-flash-lite-tts"  # or gemini-3.8-flash-tts
     piper_enabled: bool = True  # self-hosted open-source voices (Piper)
     piper_voices_dir: str = "./.cache/piper"
     piper_preload: bool = True

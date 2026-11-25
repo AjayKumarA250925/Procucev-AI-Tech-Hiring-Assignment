@@ -18,7 +18,8 @@
       <span>Speech&nbsp;to&nbsp;Text</span>
     </div>
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-view="live" role="tab">Live</button>
+      <button class="tab active" data-view="live" role="tab">Speech<span class="tab-long"> to Text</span><span class="tab-short">→Text</span></button>
+      <button class="tab" data-view="speak" role="tab">Text<span class="tab-long"> to Speech</span><span class="tab-short">→Speech</span></button>
       <button class="tab" data-view="history" role="tab">Dashboard</button>
     </nav>
     <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">
@@ -66,6 +67,46 @@
           <button id="copyBtn" class="btn ghost" disabled>Copy</button>
           <button id="clearBtn" class="btn ghost" disabled>Clear</button>
           <button id="saveBtn" class="btn primary" disabled>Save</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TEXT TO SPEECH -->
+    <section id="view-speak" class="view hidden">
+      <div class="controls card">
+        <label class="field">
+          <span>Voice engine</span>
+          <select id="speakEngine">
+            <option value="gemini">Gemini TTS (cloud)</option>
+            <option value="piper">Piper (self-hosted, open source)</option>
+            <option value="browser">Browser voice (on device)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Voice</span>
+          <select id="speakVoice"></select>
+        </label>
+      </div>
+
+      <div class="card speak-stage">
+        <textarea id="speakText" rows="7" maxlength="4000" placeholder="Type or paste text in Hindi, English or both…&#10;e.g. नमस्ते! Kal ki meeting दस बजे है, please late मत होना."></textarea>
+        <div class="speak-meta">
+          <span class="muted small" id="speakHint"></span>
+          <span class="spacer"></span>
+          <span class="muted small" id="speakCount">0 / 4000</span>
+        </div>
+        <div class="examples">
+          <span class="muted small">Try:</span>
+          <button class="chip-btn" data-example="नमस्ते! Kal ki meeting दस बजे है, please late मत होना.">Hinglish</button>
+          <button class="chip-btn" data-example="आज मौसम बहुत अच्छा है। चलो बाहर घूमने चलते हैं।">Hindi</button>
+          <button class="chip-btn" data-example="Please send me the project report by tomorrow evening.">English</button>
+        </div>
+        <div class="stage-actions">
+          <button id="speakClear" class="btn ghost" disabled>Clear</button>
+          <span class="spacer"></span>
+          <button id="speakSave" class="btn ghost" disabled>Save to history</button>
+          <button id="speakDownload" class="btn ghost" disabled>⬇ Download</button>
+          <button id="speakPlay" class="btn primary" disabled>🔊 Speak</button>
         </div>
       </div>
     </section>

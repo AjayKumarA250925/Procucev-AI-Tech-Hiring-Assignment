@@ -67,3 +67,48 @@ def test_config_lists_voices(client):
     cfg = client.get("/api/config").json()["tts"]
     assert "Kore" in cfg["gemini"]["voices"]
     assert "hi_IN-priyamvada-medium" in cfg["piper"]["voices"]
+
+
+def test_gemini_tts_hang_times_out(client, monkeypatch):
+    import asyncio
+
+    attempts = []
+
+    class HangingInteractions:
+        async def create(self, **kwargs):
+            attempts.append(kwargs["model"])
+            await asyncio.sleep(60)
+
+    class FakeClient:
+        def __init__(self, **_):
+            self.aio = type("Aio", (), {"interactions": HangingInteractions()})
+
+    monkeypatch.setattr(tts.genai, "Client", FakeClient)
+    monkeypatch.setattr(tts, "GEMINI_TIMEOUT_S", 0.05)
+    tts._cache.clear()
+    r = client.post("/api/tts", json={"text": "hang test", "engine": "gemini", "api_key": "k"})
+    assert r.status_code == 400 and "not responding" in r.json()["detail"]
+    # Tried the configured model, then fell back to the other one.
+    assert attempts == ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts"]
+
+
+def test_gemini_tts_falls_back_to_other_model(client, monkeypatch):
+    import asyncio
+
+    pcm = base64.b64encode(b"\x00\x00" * 24_000).decode()
+
+    class FlakyInteractions:
+        async def create(self, **kwargs):
+            if kwargs["model"] == "gemini-3.8-flash-lite-tts":
+                await asyncio.sleep(60)  # first model hangs
+            return type("R", (), {"output_audio": type("A", (), {"data": pcm})})
+
+    class FakeClient:
+        def __init__(self, **_):
+            self.aio = type("Aio", (), {"interactions": FlakyInteractions()})
+
+    monkeypatch.setattr(tts.genai, "Client", FakeClient)
+    monkeypatch.setattr(tts, "GEMINI_TIMEOUT_S", 0.05)
+    tts._cache.clear()
+    r = client.post("/api/tts", json={"text": "fallback test", "engine": "gemini", "api_key": "k"})
+    assert r.status_code == 200 and _wav_seconds(r.content) == 1.0

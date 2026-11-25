@@ -53,6 +53,8 @@ _PIPER_PATHS = {
 _PIPER_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/{path}/{name}.{ext}"
 
 MAX_CHARS = 4000
+GEMINI_TIMEOUT_S = 15   # Google occasionally leaves a request hanging
+GEMINI_TTS_MODELS = ("gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts")
 
 
 def has_devanagari(text: str) -> bool:
@@ -67,20 +69,30 @@ async def gemini_tts(text: str, voice: str, api_key: str, model: str) -> bytes:
         voice = "Kore"
     client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
     try:
-        for attempt in range(3):  # retry brief network blips, not API errors
+        # Try the configured model, then the other Gemini TTS model if the first
+        # one hangs or the connection drops (seen in practice); API errors such
+        # as a bad key are not retried.
+        fallback = [m for m in GEMINI_TTS_MODELS if m != model][:1]
+        attempts = [model, *fallback]
+        for i, attempt_model in enumerate(attempts):
             try:
-                result = await client.aio.interactions.create(
-                    model=model,
-                    input=text,
-                    response_format={"type": "audio"},
-                    generation_config={"speech_config": [{"voice": voice}]},
+                result = await asyncio.wait_for(
+                    client.aio.interactions.create(
+                        model=attempt_model,
+                        input=text,
+                        response_format={"type": "audio"},
+                        generation_config={"speech_config": [{"voice": voice}]},
+                    ),
+                    timeout=GEMINI_TIMEOUT_S,
                 )
                 break
             except Exception as exc:
-                if attempt == 2 or "connect" not in type(exc).__name__.lower():
+                transient = isinstance(exc, TimeoutError) or "connect" in type(exc).__name__.lower()
+                if i == len(attempts) - 1 or not transient:
                     raise
-                log.warning("Gemini TTS connection failed, retrying: %s", exc)
-                await asyncio.sleep(0.5 * (attempt + 1))
+                log.warning("Gemini TTS %s failed (%r), trying %s", attempt_model, exc, attempts[i + 1])
+    except TimeoutError as exc:
+        raise TTSError("Gemini TTS is not responding right now. Try again or use the Piper voice.") from exc
     except Exception as exc:
         log.exception("Gemini TTS failed")
         msg = str(exc).lower()
