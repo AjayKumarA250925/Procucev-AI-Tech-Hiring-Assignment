@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Speech to Text</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Crect width=%2224%22 height=%2224%22 rx=%226%22 fill=%22%234f46e5%22/%3E%3Cpath fill=%22white%22 d=%22M12 14a2.5 2.5 0 0 0 2.5-2.5v-5a2.5 2.5 0 1 0-5 0v5A2.5 2.5 0 0 0 12 14Zm4.2-2.5a4.2 4.2 0 0 1-8.4 0H6.3a5.7 5.7 0 0 0 5 5.6V19h1.4v-1.9a5.7 5.7 0 0 0 5-5.6h-1.5Z%22/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+      </span>
+      <span>Speech&nbsp;to&nbsp;Text</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="live" role="tab">Live</button>
+      <button class="tab" data-view="history" role="tab">Dashboard</button>
+    </nav>
+    <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.4-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3.3h-4l-.4 2.7a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.4L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.4 2.5-1c.5.4 1.1.7 1.7 1l.4 2.7h4l.4-2.7c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.4L19.4 13ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z" transform="translate(-1 0)"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <!-- LIVE -->
+    <section id="view-live" class="view">
+      <div class="controls card">
+        <label class="field">
+          <span>Engine</span>
+          <select id="engineSelect">
+            <option value="gemini">Gemini Live (cloud)</option>
+            <option value="whisper">Whisper (self-hosted, open source)</option>
+            <option value="browser">Browser speech (Chrome, no server)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Language</span>
+          <select id="languageSelect"></select>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="autoSave" checked />
+          <span>Auto-save when I stop</span>
+        </label>
+      </div>
+
+      <div class="stage card">
+        <button id="micBtn" class="mic" aria-label="Start recording">
+          <span class="ring" id="ring"></span>
+          <svg viewBox="0 0 24 24" width="34" height="34"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+        </button>
+        <div class="status-line">
+          <span id="statusDot" class="dot"></span>
+          <span id="statusText">Tap the mic and start speaking — Hindi, English or both.</span>
+          <span id="timer" class="timer">00:00</span>
+        </div>
+        <div id="transcript" class="transcript" aria-live="polite"><span id="finalText"></span><span id="interimText" class="interim"></span><span id="placeholder" class="placeholder">Your words will appear here as you speak…<br /><em>e.g. “Kal ki meeting 10 baje hai, please don’t be late.”</em></span></div>
+        <div class="stage-actions">
+          <span id="langBadge" class="badge hidden"></span>
+          <span class="spacer"></span>
+          <button id="speakBtn" class="btn ghost" disabled>🔊 Listen</button>
+          <button id="copyBtn" class="btn ghost" disabled>Copy</button>
+          <button id="clearBtn" class="btn ghost" disabled>Clear</button>
+          <button id="saveBtn" class="btn primary" disabled>Save</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section id="view-history" class="view hidden">
+      <div class="stats">
+        <div class="stat card"><span class="stat-num" id="statTotal">0</span><span class="stat-label">Transcriptions</span></div>
+        <div class="stat card"><span class="stat-num" id="statWords">0</span><span class="stat-label">Words</span></div>
+        <div class="stat card"><span class="stat-num" id="statAudio">0m</span><span class="stat-label">Audio transcribed</span></div>
+        <div class="stat card"><span class="stat-num" id="statEngines">—</span><span class="stat-label">By engine</span></div>
+      </div>
+
+      <div class="toolbar">
+        <input id="searchInput" type="search" placeholder="Search transcriptions…" />
+        <select id="engineFilter">
+          <option value="">All engines</option>
+          <option value="gemini">Gemini</option>
+          <option value="whisper">Whisper</option>
+          <option value="browser">Browser</option>
+          <option value="manual">Manual</option>
+        </select>
+        <button id="newBtn" class="btn primary">+ New</button>
+      </div>
+
+      <div id="list" class="list"></div>
+      <div class="pager">
+        <button id="prevBtn" class="btn ghost">‹ Prev</button>
+        <span id="pageInfo"></span>
+        <button id="nextBtn" class="btn ghost">Next ›</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Edit / create dialog -->
+  <dialog id="editDialog">
+    <form method="dialog" id="editForm">
+      <h2 id="editTitle">Edit transcription</h2>
+      <label class="field"><span>Title</span><input id="editName" maxlength="200" placeholder="Optional — first words are used" /></label>
+      <label class="field"><span>Text</span><textarea id="editText" rows="8" required></textarea></label>
+      <label class="field"><span>Language</span><input id="editLang" maxlength="64" placeholder="e.g. hi, en" /></label>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn ghost" formnovalidate>Cancel</button>
+        <button value="save" class="btn primary" id="editSave">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Settings dialog -->
+  <dialog id="settingsDialog">
+    <form method="dialog">
+      <h2>Settings</h2>
+      <p class="muted" id="keyHint"></p>
+      <label class="field"><span>Gemini API key (kept in this browser only)</span>
+        <input id="apiKeyInput" type="password" autocomplete="off" placeholder="AIza…" /></label>
+      <label class="field"><span>Gemini Live model</span>
+        <input id="modelInput" list="modelList" placeholder="gemini-3.5-transcribe-live" />
+        <datalist id="modelList">
+          <option value="gemini-3.5-transcribe-live">
+          <option value="gemini-3.1-flash-live-preview">
+          <option value="gemini-3.8-live">
+        </datalist>
+      </label>
+      <p class="muted small">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Leave blank to use the server's key.</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn ghost">Close</button>
+        <button value="save" class="btn primary" id="settingsSave">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/static/app.js" type="module"></script>
+</body>
+</html>

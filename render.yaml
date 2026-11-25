@@ -1,0 +1,27 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+# Creates a managed PostgreSQL database and the web service.
+databases:
+  - name: stt-db
+    plan: free
+    databaseName: stt
+    user: stt
+
+services:
+  - type: web
+    name: speech-to-text
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stt-db
+          property: connectionString
+      - key: GEMINI_API_KEY
+        sync: false          # set it in the Render dashboard
+      - key: GEMINI_LIVE_MODEL
+        value: gemini-3.5-transcribe-live
+      # The free plan (512 MB RAM, shared CPU) is too small for Whisper "small";
+      # use "tiny", or a paid plan / Hugging Face Space for the self-hosted engine.
+      - key: WHISPER_MODEL
+        value: tiny
