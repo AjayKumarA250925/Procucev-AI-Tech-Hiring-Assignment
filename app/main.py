@@ -70,6 +70,7 @@ def public_config():
         },
         "languages": {k: v["label"] for k, v in LANGUAGES.items()},
         "tts": {
+            "default": s.default_tts_engine if s.piper_enabled or s.default_tts_engine != "piper" else "gemini",
             "gemini": {
                 "server_key": bool(s.gemini_api_key),
                 "model": s.gemini_tts_model,

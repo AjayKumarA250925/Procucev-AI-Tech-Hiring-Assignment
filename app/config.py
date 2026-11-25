@@ -23,7 +23,9 @@ class Settings(BaseSettings):
 
     default_engine: str = "gemini"
 
-    # Text-to-speech
+    # Text-to-speech. Piper is the default: unlimited and ~instant. Gemini's free
+    # tier allows only 10 voice requests per day per model.
+    default_tts_engine: str = "piper"
     # Falls back to the other Gemini TTS model automatically if this one hangs.
     gemini_tts_model: str = "gemini-3.8-flash-lite-tts"  # or gemini-3.8-flash-tts
     piper_enabled: bool = True  # self-hosted open-source voices (Piper)

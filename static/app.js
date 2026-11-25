@@ -39,14 +39,21 @@ const escapeHtml = (s) =>
 const fmtClock = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 // ---------------------------------------------------------------- text-to-speech
-const tts = { audio: null, url: null, button: null };
+// Server voices are streamed: raw PCM chunks are scheduled on a Web Audio
+// clock as they arrive, so playback starts after the first chunk instead of
+// after the whole file has been generated.
+const tts = { button: null, abort: null, ctx: null, firstAudioMs: null };
 
 function ttsSettings() {
-  return { engine: store.get("tts_engine", "gemini"), voice: store.get("tts_voice") };
+  return {
+    engine: store.get("tts_engine", config.tts?.default || "piper"),
+    voice: store.get("tts_voice"),
+  };
 }
 
 function stopSpeaking() {
-  if (tts.audio) { tts.audio.pause(); tts.audio = null; }
+  if (tts.abort) { tts.abort.abort(); tts.abort = null; }
+  if (tts.ctx) { tts.ctx.close().catch(() => {}); tts.ctx = null; }
   if ("speechSynthesis" in window) speechSynthesis.cancel();
   if (tts.button) { tts.button.textContent = tts.button.dataset.label; tts.button = null; }
 }
@@ -70,7 +77,13 @@ function browserSpeak(text, btn) {
   speechSynthesis.speak(u);
 }
 
-// Fetch a WAV for the text from the server (Gemini or Piper voice).
+async function errorDetail(res) {
+  let detail = res.statusText || "Speech failed";
+  try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
+  return typeof detail === "string" ? detail : "Speech failed";
+}
+
+// Whole WAV file (used for downloads). Served from the server cache after a stream.
 async function fetchSpeech(text) {
   const { engine, voice } = ttsSettings();
   const res = await fetch("/api/tts", {
@@ -78,34 +91,95 @@ async function fetchSpeech(text) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, engine, voice, api_key: store.get("gemini_api_key") || null }),
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
-    throw new Error(typeof detail === "string" ? detail : "Speech failed");
-  }
+  if (!res.ok) throw new Error(await errorDetail(res));
   return res.blob();
+}
+
+async function streamSpeech(text, engine, voice, btn) {
+  const started = performance.now();
+  const ctrl = new AbortController();
+  tts.abort = ctrl;
+  const res = await fetch("/api/tts/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, engine, voice, api_key: store.get("gemini_api_key") || null }),
+    signal: ctrl.signal,
+  });
+  if (!res.ok) throw new Error(await errorDetail(res));
+  const rate = Number(res.headers.get("X-Sample-Rate")) || 24000;
+  const ctx = new AudioContext();
+  tts.ctx = ctx;
+  if (ctx.state === "suspended") await ctx.resume();
+
+  const minBytes = Math.round(rate * 0.12) * 2; // schedule >= 120 ms at a time (no clicks)
+  let pending = new Uint8Array(0);
+  let at = 0;
+  let last = null;
+  const play = (bytes) => {
+    const n = bytes.length >> 1;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, n * 2);
+    const buffer = ctx.createBuffer(1, n, rate);
+    const out = buffer.getChannelData(0);
+    for (let i = 0; i < n; i++) out[i] = view.getInt16(i * 2, true) / 32768;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    at = Math.max(at, ctx.currentTime + 0.03);
+    src.start(at);
+    at += buffer.duration;
+    if (!last) {
+      tts.firstAudioMs = Math.round(performance.now() - started);
+      setSpeakingButton(btn, "⏹ Stop");
+    }
+    last = src;
+  };
+
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (tts.ctx !== ctx) return; // stopped by the user
+    if (value) {
+      const merged = new Uint8Array(pending.length + value.length);
+      merged.set(pending);
+      merged.set(value, pending.length);
+      pending = merged;
+    }
+    if (pending.length >= minBytes || (done && pending.length >= 2)) {
+      const even = pending.length & ~1;
+      play(pending.subarray(0, even));
+      pending = pending.slice(even);
+    }
+    if (done) break;
+  }
+  tts.abort = null;
+  const finish = () => { if (tts.ctx === ctx) stopSpeaking(); };
+  if (!last || at <= ctx.currentTime) finish();
+  else last.onended = finish;
 }
 
 async function speak(text, btn = null) {
   const playing = tts.button === btn && btn !== null;
   stopSpeaking();
   if (playing || !text) return; // second click = stop
-  const { engine } = ttsSettings();
+  const { engine, voice } = ttsSettings();
   try {
     if (engine === "browser") return browserSpeak(text, btn);
     setSpeakingButton(btn, "⏳");
-    const blob = await fetchSpeech(text);
-    if (btn && tts.button !== btn) return; // user clicked something else meanwhile
-    if (tts.url) URL.revokeObjectURL(tts.url);
-    tts.url = URL.createObjectURL(blob);
-    tts.audio = new Audio(tts.url);
-    tts.audio.onended = () => stopSpeaking();
-    setSpeakingButton(btn, "⏹ Stop");
-    await tts.audio.play();
+    await streamSpeech(text, engine, voice, btn);
   } catch (err) {
+    if (err.name === "AbortError" || (btn && tts.button !== btn)) return; // user stopped
     stopSpeaking();
-    toast(`${err.message} Using the browser voice instead.`, true);
-    try { browserSpeak(text, btn); } catch { /* nothing else to try */ }
+    const usePiper = engine === "gemini" && config.tts?.piper?.enabled;
+    toast(`${err.message} ${usePiper ? "Using the Piper voice instead." : "Using the browser voice instead."}`, true);
+    try {
+      if (!usePiper) return browserSpeak(text, btn);
+      setSpeakingButton(btn, "⏳");
+      await streamSpeech(text, "piper", "", btn);
+    } catch (err2) {
+      if (err2.name === "AbortError" || (btn && tts.button !== btn)) return;
+      stopSpeaking();
+      try { browserSpeak(text, btn); } catch { /* nothing else to try */ }
+    }
   }
 }
 
@@ -554,7 +628,7 @@ $("settingsBtn").addEventListener("click", () => {
   $("apiKeyInput").value = store.get("gemini_api_key");
   $("modelInput").value = store.get("gemini_model");
   $("modelInput").placeholder = config.engines.gemini?.model || "gemini-3.5-transcribe-live";
-  fillVoiceOptions(store.get("tts_engine", "gemini"), store.get("tts_voice"));
+  fillVoiceOptions(ttsSettings().engine, ttsSettings().voice);
   $("keyHint").textContent = config.engines.gemini?.server_key
     ? "This server already has a Gemini key, so this is optional."
     : "This server has no Gemini key. Add your own to use the Gemini engine.";
@@ -571,7 +645,7 @@ $("settingsSave").addEventListener("click", () => {
 });
 
 const VOICE_HINTS = {
-  gemini: "Natural cloud voices. Hindi, English and mixed text, detected automatically.",
+  gemini: "Most natural cloud voices; Hindi, English and mixed text. Free tier: 10 plays a day per model, then the Piper voice is used automatically.",
   piper: "Open-source voices running on this server (Piper). Hindi text uses the voice you pick; English-only text uses an English voice.",
   browser: "Free voices built into this device. Quality depends on the device and browser.",
 };
@@ -602,7 +676,7 @@ $("ttsTestBtn").addEventListener("click", (e) => {
 const SPEAK_IDS = ["speakEngine", "speakVoice", "speakHint"];
 
 function syncSpeakPickers() {
-  fillVoiceOptions(store.get("tts_engine", "gemini"), store.get("tts_voice"), SPEAK_IDS);
+  fillVoiceOptions(ttsSettings().engine, ttsSettings().voice, SPEAK_IDS);
 }
 
 function speakTextValue() {

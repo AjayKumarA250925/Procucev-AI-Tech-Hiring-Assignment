@@ -29,9 +29,16 @@ Dashboard.
 
 | Voice engine | Where it runs | Notes |
 | --- | --- | --- |
-| **Gemini TTS** (default) | Google cloud, same key | `gemini-3.8-flash-lite-tts` with 30 voices; if it does not answer within 15 s the app switches to `gemini-3.8-flash-tts`. Detects Hindi, English and mixed text automatically. |
-| **Piper** (self-hosted, open source) | This server's CPU | [Piper](https://github.com/OHF-Voice/piper1-gpl) Hindi voices *Priyamvada* (female) and *Pratham* (male). English-only text uses an English voice. Very fast (about 0.1 s per sentence on CPU). |
-| **Browser** | The user's device | `speechSynthesis`. Free, and used automatically if the server voices fail. |
+| **Piper** (default, self-hosted, open source) | This server's CPU | [Piper](https://github.com/OHF-Voice/piper1-gpl) Hindi voices *Priyamvada* (female) and *Pratham* (male). English-only text uses an English voice. Unlimited, and sound starts in about 0.1 s. |
+| **Gemini TTS** | Google cloud, same key | 30 voices, the most natural, handles Hindi, English and mixed text. Uses `gemini-3.8-flash-lite-tts`, falling back to `gemini-3.8-flash-tts`. **The free tier allows only 10 requests per day per model**, so when the limit is hit the app says so (with the reset time) and switches to Piper in under a second. |
+| **Browser** | The user's device | `speechSynthesis`. Free, and the last fallback. |
+
+**Low latency through streaming.** `POST /api/tts/stream` sends raw PCM while
+it is being generated, and the browser schedules each chunk on a Web Audio
+clock, so playback starts after the first chunk instead of after the whole
+file. Measured with Piper: a 1,500-character text starts playing after
+**0.07 s**, against 2.6 s when waiting for the complete file. Finished audio is
+cached, so replays and downloads are instant.
 
 All voices were verified by sending their audio back through the app's own
 speech recognition: each sentence was heard back exactly as written.
@@ -100,6 +107,7 @@ stays in that browser only.
 | `WHISPER_COMPUTE_TYPE` | `int8` | CTranslate2 quantisation |
 | `WHISPER_PRELOAD` | `true` | Load the model at startup |
 | `DEFAULT_ENGINE` | `gemini` | Engine selected for first-time visitors |
+| `DEFAULT_TTS_ENGINE` | `piper` | Voice engine for first-time visitors |
 | `GEMINI_TTS_MODEL` | `gemini-3.8-flash-lite-tts` | Gemini voice model; the other one is used as a fallback |
 | `PIPER_ENABLED` | `true` | Turn the open-source voices on or off |
 | `PIPER_VOICES_DIR` | `./.cache/piper` | Where voices are stored (downloaded on first use; built into the Docker image) |
@@ -118,7 +126,8 @@ Interactive docs are served at **`/docs`** (Swagger UI).
 | `PATCH` | `/api/transcriptions/{id}` | Update `title`, `text` or `language` |
 | `DELETE` | `/api/transcriptions/{id}` | Delete |
 | `GET` | `/api/transcriptions/stats` | Totals for the dashboard |
-| `POST` | `/api/tts` | Text-to-speech: `{"text", "engine": "gemini"\|"piper", "voice"}` returns `audio/wav` |
+| `POST` | `/api/tts/stream` | Streaming text-to-speech: raw 16-bit mono PCM, sample rate in `X-Sample-Rate` |
+| `POST` | `/api/tts` | Text-to-speech as a complete `audio/wav` file. Body for both: `{"text", "engine": "piper"\|"gemini", "voice"}` |
 | `GET` | `/api/config` | Available engines, languages and voices |
 | `WS` | `/ws/transcribe` | Real-time stream (protocol below) |
 

@@ -22,7 +22,7 @@ def test_tts_validation(client):
 
 def test_gemini_tts_needs_key(client):
     r = client.post("/api/tts", json={"text": "hello", "engine": "gemini"})
-    assert r.status_code == 400 and "API key" in r.json()["detail"]
+    assert r.status_code == 401 and "API key" in r.json()["detail"]
 
 
 def test_gemini_tts_wraps_raw_pcm(client, monkeypatch):
@@ -87,7 +87,7 @@ def test_gemini_tts_hang_times_out(client, monkeypatch):
     monkeypatch.setattr(tts, "GEMINI_TIMEOUT_S", 0.05)
     tts._cache.clear()
     r = client.post("/api/tts", json={"text": "hang test", "engine": "gemini", "api_key": "k"})
-    assert r.status_code == 400 and "not responding" in r.json()["detail"]
+    assert r.status_code == 504 and "not responding" in r.json()["detail"]
     # Tried the configured model, then fell back to the other one.
     assert attempts == ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts"]
 
@@ -112,3 +112,89 @@ def test_gemini_tts_falls_back_to_other_model(client, monkeypatch):
     tts._cache.clear()
     r = client.post("/api/tts", json={"text": "fallback test", "engine": "gemini", "api_key": "k"})
     assert r.status_code == 200 and _wav_seconds(r.content) == 1.0
+
+
+
+# ---------------------------------------------------------------- streaming
+def _fake_gemini(monkeypatch, behaviour):
+    """behaviour(model, kwargs) -> result object, async iterator, or raises."""
+    calls = []
+
+    class Interactions:
+        async def create(self, **kwargs):
+            calls.append(kwargs["model"])
+            return await behaviour(kwargs["model"], kwargs)
+
+    class FakeClient:
+        def __init__(self, **_):
+            self.aio = type("Aio", (), {"interactions": Interactions()})
+
+    monkeypatch.setattr(tts.genai, "Client", FakeClient)
+    tts._cache.clear()
+    return calls
+
+
+def _delta(pcm: bytes):
+    d = type("D", (), {"type": "audio", "data": base64.b64encode(pcm).decode()})
+    return type("E", (), {"event_type": "step.delta", "delta": d})
+
+
+def test_gemini_stream_sends_chunks_and_caches(client, monkeypatch):
+    async def behaviour(model, kwargs):
+        assert kwargs["stream"] is True
+
+        async def events():
+            yield type("E", (), {"event_type": "interaction.start"})  # no audio
+            yield _delta(b"\x01\x00" * 2400)
+            yield _delta(b"\x02\x00" * 2400)
+        return events()
+
+    calls = _fake_gemini(monkeypatch, behaviour)
+    body = {"text": "stream me", "engine": "gemini", "voice": "Puck", "api_key": "k"}
+    r = client.post("/api/tts/stream", json=body)
+    assert r.status_code == 200 and r.headers["x-sample-rate"] == "24000"
+    assert r.content == b"\x01\x00" * 2400 + b"\x02\x00" * 2400
+    # The finished stream is cached: the WAV download needs no second API call.
+    wav = client.post("/api/tts", json=body)
+    assert wav.status_code == 200 and _wav_seconds(wav.content) == 0.2
+    assert calls == ["gemini-3.8-flash-lite-tts"]
+
+
+def test_gemini_rate_limit_falls_back_and_explains(client, monkeypatch):
+    msg = ("Error code: 429 - Rate limit exceeded for model {m} (limit: 10 requests per day "
+           "on Free Tier). Please retry in 19h47m17s or upgrade your tier.")
+
+    async def behaviour(model, kwargs):
+        raise RuntimeError(msg.format(m=model))
+
+    calls = _fake_gemini(monkeypatch, behaviour)
+    r = client.post("/api/tts/stream", json={"text": "hi", "engine": "gemini", "api_key": "k"})
+    assert r.status_code == 429
+    assert r.json()["detail"] == (
+        "Gemini's free voice limit is used up (10 requests per day on Free Tier); it resets in 19h47m."
+    )
+    assert calls == ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts"]  # tried both quotas
+
+
+def test_gemini_bad_key_is_not_retried(client, monkeypatch):
+    async def behaviour(model, kwargs):
+        raise RuntimeError("400 API key not valid. Please pass a valid API key.")
+
+    calls = _fake_gemini(monkeypatch, behaviour)
+    r = client.post("/api/tts/stream", json={"text": "hi", "engine": "gemini", "api_key": "bad"})
+    assert r.status_code == 401 and len(calls) == 1
+
+
+@pytest.mark.skipif(not Path(".cache/piper/hi_IN-priyamvada-medium.onnx").exists(),
+                    reason="Piper voices not downloaded")
+def test_piper_stream_matches_download(client):
+    tts._cache.clear()
+    body = {"text": "नमस्ते दोस्तों। आज मौसम बहुत अच्छा है। चलो घूमने चलते हैं।", "engine": "piper",
+            "voice": "hi_IN-priyamvada-medium"}
+    with client.stream("POST", "/api/tts/stream", json=body) as r:
+        assert r.status_code == 200 and r.headers["x-sample-rate"] == "22050"
+        chunks = list(r.iter_bytes())
+    pcm = b"".join(chunks)
+    assert len(pcm) / 2 / 22050 > 2  # > 2 s of speech
+    wav = client.post("/api/tts", json=body).content  # served from the cache
+    assert tts._unwav(wav) == (22050, pcm)
