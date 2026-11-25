@@ -71,6 +71,10 @@ speech recognition: each sentence was heard back exactly as written.
 
 ## Run it
 
+> **Step-by-step instructions** (installation, Gemini key, Docker or Python,
+> deploying to Render, all settings and troubleshooting) are in
+> **[SETUP.md](SETUP.md)**. The short version:
+
 ### Option A: Docker (PostgreSQL included)
 
 ```bash
@@ -81,7 +85,7 @@ GEMINI_API_KEY=your-key docker compose up --build    # key is optional
 ### Option B: Python
 
 ```bash
-python3.12 -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate   # Python 3.12 or 3.13
 pip install -r requirements-dev.txt
 cp .env.example .env          # optional: set DATABASE_URL / GEMINI_API_KEY
 uvicorn app.main:app --reload
