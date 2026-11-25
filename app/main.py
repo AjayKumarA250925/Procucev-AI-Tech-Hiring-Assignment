@@ -11,7 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from .config import get_settings
 from .database import Base, engine
 from .engines import LANGUAGES
-from .routers import live, transcriptions
+from .routers import live, speech, transcriptions
+from .tts import GEMINI_VOICES, PIPER_VOICES
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -28,6 +29,12 @@ async def lifespan(app: FastAPI):
         threading.Thread(
             target=_safe_preload, args=(load_model, settings), daemon=True
         ).start()
+    if settings.piper_enabled and settings.piper_preload:
+        from .tts import preload_piper
+
+        threading.Thread(
+            target=_safe_preload_piper, args=(preload_piper, settings), daemon=True
+        ).start()
     yield
 
 
@@ -38,9 +45,17 @@ def _safe_preload(load_model, settings) -> None:
         logging.getLogger(__name__).exception("Whisper preload failed")
 
 
+def _safe_preload_piper(preload_piper, settings) -> None:
+    try:
+        preload_piper(settings.piper_voices_dir, settings.piper_max_loaded)
+    except Exception:
+        logging.getLogger(__name__).exception("Piper preload failed")
+
+
 app = FastAPI(title="Speech to Text", version="1.0.0", lifespan=lifespan)
 app.include_router(transcriptions.router)
 app.include_router(live.router)
+app.include_router(speech.router)
 
 
 @app.get("/api/config", tags=["meta"])
@@ -54,6 +69,14 @@ def public_config():
             "whisper": {"enabled": s.whisper_enabled, "model": s.whisper_model},
         },
         "languages": {k: v["label"] for k, v in LANGUAGES.items()},
+        "tts": {
+            "gemini": {
+                "server_key": bool(s.gemini_api_key),
+                "model": s.gemini_tts_model,
+                "voices": {k: f"{k} ({v})" for k, v in GEMINI_VOICES.items()},
+            },
+            "piper": {"enabled": s.piper_enabled, "voices": PIPER_VOICES},
+        },
     }
 
 

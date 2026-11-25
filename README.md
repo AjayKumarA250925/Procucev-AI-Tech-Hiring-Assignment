@@ -1,4 +1,4 @@
-# Speech to Text: real-time multilingual transcription
+# Speech to Text: real-time multilingual transcription and text-to-speech
 
 A web app that transcribes speech **live, as you talk**, including code-mixed
 **Hindi + English (Hinglish)** and other Indian languages. Every
@@ -19,9 +19,19 @@ Pick an engine in the UI. All three use the same transcript view and storage.
 | **Whisper** (self-hosted, open source) | This server's CPU | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) `small` (int8). Made "live" with energy-based voice activity detection: the open utterance is re-decoded about every second for interim text, then decoded with beam search when the speaker pauses. No data leaves the server. |
 | **Browser** | The user's browser (Chrome) | Web Speech API. A zero-setup fallback that needs no key or server compute. |
 
-**Text-to-speech:** every transcript has a 🔊 *Listen* button that uses the
-browser's built-in, on-device speech synthesis, with a Hindi voice for
-Devanagari text and an Indian-English voice otherwise.
+## Text-to-speech
+
+Every transcript can be read aloud with 🔊 **Listen** or downloaded as a WAV
+file (⬇). The voice is chosen in **Settings (⚙)**.
+
+| Voice engine | Where it runs | Notes |
+| --- | --- | --- |
+| **Gemini TTS** (default) | Google cloud, same key | `gemini-3.8-flash-tts` with 30 voices. Detects Hindi, English and mixed text automatically. |
+| **Piper** (self-hosted, open source) | This server's CPU | [Piper](https://github.com/OHF-Voice/piper1-gpl) Hindi voices *Priyamvada* (female) and *Pratham* (male). English-only text uses an English voice. Very fast (about 0.1 s per sentence on CPU). |
+| **Browser** | The user's device | `speechSynthesis`. Free, and used automatically if the server voices fail. |
+
+All voices were verified by sending their audio back through the app's own
+speech recognition: each sentence was heard back exactly as written.
 
 ## Architecture
 
@@ -87,6 +97,11 @@ stays in that browser only.
 | `WHISPER_COMPUTE_TYPE` | `int8` | CTranslate2 quantisation |
 | `WHISPER_PRELOAD` | `true` | Load the model at startup |
 | `DEFAULT_ENGINE` | `gemini` | Engine selected for first-time visitors |
+| `GEMINI_TTS_MODEL` | `gemini-3.8-flash-tts` | Gemini voice model (`gemini-3.8-flash-lite-tts` is cheaper) |
+| `PIPER_ENABLED` | `true` | Turn the open-source voices on or off |
+| `PIPER_VOICES_DIR` | `./.cache/piper` | Where voices are stored (downloaded on first use; built into the Docker image) |
+| `PIPER_PRELOAD` | `true` | Load the voices at startup |
+| `PIPER_MAX_LOADED` | `3` | Voices kept in memory at once (about 100 to 150 MB each; use `1` on 512 MB servers) |
 
 ## API
 
@@ -100,7 +115,8 @@ Interactive docs are served at **`/docs`** (Swagger UI).
 | `PATCH` | `/api/transcriptions/{id}` | Update `title`, `text` or `language` |
 | `DELETE` | `/api/transcriptions/{id}` | Delete |
 | `GET` | `/api/transcriptions/stats` | Totals for the dashboard |
-| `GET` | `/api/config` | Available engines and languages |
+| `POST` | `/api/tts` | Text-to-speech: `{"text", "engine": "gemini"\|"piper", "voice"}` returns `audio/wav` |
+| `GET` | `/api/config` | Available engines, languages and voices |
 | `WS` | `/ws/transcribe` | Real-time stream (protocol below) |
 
 **WebSocket protocol**
@@ -125,7 +141,8 @@ pytest -q
 ```
 
 The tests cover the CRUD endpoints (validation, search, filter, pagination,
-stats) and the WebSocket protocol with a fake engine. The Gemini config
+stats), the WebSocket protocol with a fake engine, and the text-to-speech
+endpoint (Gemini mocked, Piper for real). The Gemini config
 builder is also tested. During development the full stack was additionally
 tested end to end: synthetic Hindi + English speech was streamed in real time
 through the Docker image (PostgreSQL + Whisper), and the UI was driven in
@@ -136,9 +153,10 @@ edit, search and delete, and mobile layout.
 
 * **Render:** [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/AjayKumarA250925/Procucev-AI-Tech-Hiring-Assignment)
   `render.yaml` is a Blueprint that creates a free PostgreSQL
-  database and the Docker web service. Set `GEMINI_API_KEY` in the
-  dashboard. The free plan's 512 MB of RAM fits Whisper `tiny` at most, so use
-  Gemini there, or a larger plan for Whisper `small`.
+  database and the Docker web service. Set `GEMINI_API_KEY` when asked. The
+  free plan (512 MB RAM, a fraction of a CPU) runs Gemini speech recognition
+  plus Gemini and Piper voices. Whisper is switched off there because it is
+  too slow on that CPU; enable it on a larger plan.
 * **Any Docker host** (Hugging Face Spaces, Railway, Fly.io, a VM): build the
   `Dockerfile` (listens on `$PORT`, default 8000) and set `DATABASE_URL` to a
   PostgreSQL instance (Neon, Supabase and Render all have free tiers). The

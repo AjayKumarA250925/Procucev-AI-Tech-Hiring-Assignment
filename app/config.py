@@ -23,6 +23,13 @@ class Settings(BaseSettings):
 
     default_engine: str = "gemini"
 
+    # Text-to-speech
+    gemini_tts_model: str = "gemini-3.8-flash-tts"  # or gemini-3.8-flash-lite-tts
+    piper_enabled: bool = True  # self-hosted open-source voices (Piper)
+    piper_voices_dir: str = "./.cache/piper"
+    piper_preload: bool = True
+    piper_max_loaded: int = 3  # voices kept in memory at once (1 on 512 MB servers)
+
 
 @lru_cache
 def get_settings() -> Settings:

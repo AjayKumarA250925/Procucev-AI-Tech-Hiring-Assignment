@@ -21,7 +21,15 @@ services:
         sync: false          # set it in the Render dashboard
       - key: GEMINI_LIVE_MODEL
         value: gemini-3.5-transcribe-live
-      # The free plan (512 MB RAM, shared CPU) is too small for Whisper "small";
-      # use "tiny", or a paid plan / Hugging Face Space for the self-hosted engine.
+      # Free plan = 512 MB RAM and a fraction of a CPU. Measured: Piper with one
+      # voice loaded at a time uses ~220 MB. Whisper is too slow on this CPU, so
+      # speech recognition uses Gemini here; set WHISPER_ENABLED=true (and
+      # WHISPER_MODEL=small) on a bigger plan to enable the self-hosted engine.
+      - key: WHISPER_ENABLED
+        value: "false"
       - key: WHISPER_MODEL
-        value: tiny
+        value: none           # also skips baking the model into the image
+      - key: PIPER_PRELOAD
+        value: "false"
+      - key: PIPER_MAX_LOADED
+        value: "1"

@@ -3,6 +3,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/app/.cache/huggingface \
+    PIPER_VOICES_DIR=/app/.cache/piper \
     PORT=8000
 
 # Run as a non-root user (uid 1000 also matches Hugging Face Spaces).
@@ -19,6 +20,10 @@ ENV WHISPER_MODEL=${WHISPER_MODEL}
 RUN if [ "$WHISPER_MODEL" != "none" ]; then \
       python -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8')"; \
     fi
+
+# Bake the open-source Piper voices (Hindi female/male + English) into the image.
+COPY scripts/download_voices.py scripts/
+RUN python scripts/download_voices.py /app/.cache/piper
 
 COPY app ./app
 COPY static ./static

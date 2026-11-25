@@ -6,6 +6,7 @@ _db = os.path.join(tempfile.mkdtemp(), "test.db")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_db}")
 os.environ["GEMINI_API_KEY"] = ""
 os.environ["WHISPER_PRELOAD"] = "false"
+os.environ["PIPER_PRELOAD"] = "false"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

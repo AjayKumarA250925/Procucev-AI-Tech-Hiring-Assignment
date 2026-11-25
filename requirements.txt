@@ -8,3 +8,5 @@ numpy==2.5.5
 # Self-hosted open-source speech engine. Remove (and set WHISPER_ENABLED=false)
 # for a slim Gemini-only deployment.
 faster-whisper==1.2.1
+# Self-hosted open-source text-to-speech (Piper voices, ONNX runtime).
+piper-tts==1.8.0

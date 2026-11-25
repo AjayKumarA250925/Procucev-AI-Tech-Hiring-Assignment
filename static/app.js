@@ -38,15 +38,97 @@ const escapeHtml = (s) =>
 
 const fmtClock = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-function speak(text) {
-  if (!("speechSynthesis" in window)) return toast("Text-to-speech is not supported in this browser", true);
-  speechSynthesis.cancel();
+// ---------------------------------------------------------------- text-to-speech
+const tts = { audio: null, url: null, button: null };
+
+function ttsSettings() {
+  return { engine: store.get("tts_engine", "gemini"), voice: store.get("tts_voice") };
+}
+
+function stopSpeaking() {
+  if (tts.audio) { tts.audio.pause(); tts.audio = null; }
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  if (tts.button) { tts.button.textContent = tts.button.dataset.label; tts.button = null; }
+}
+
+function setSpeakingButton(btn, label) {
+  if (!btn) return;
+  btn.dataset.label ??= btn.textContent;
+  btn.textContent = label;
+  tts.button = btn;
+}
+
+function browserSpeak(text, btn) {
+  if (!("speechSynthesis" in window)) throw new Error("This browser cannot speak text.");
   const u = new SpeechSynthesisUtterance(text);
   // Devanagari script -> Hindi voice, otherwise Indian English (reads Hinglish well).
-  u.lang = /[ऀ-ॿ]/.test(text) ? "hi-IN" : "en-IN";
+  u.lang = /[\u0900-\u097F]/.test(text) ? "hi-IN" : "en-IN";
   const voice = speechSynthesis.getVoices().find((v) => v.lang.replace("_", "-") === u.lang);
   if (voice) u.voice = voice;
+  u.onend = u.onerror = () => { if (tts.button === btn) stopSpeaking(); };
+  setSpeakingButton(btn, "⏹ Stop");
   speechSynthesis.speak(u);
+}
+
+// Fetch a WAV for the text from the server (Gemini or Piper voice).
+async function fetchSpeech(text) {
+  const { engine, voice } = ttsSettings();
+  const res = await fetch("/api/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, engine, voice, api_key: store.get("gemini_api_key") || null }),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
+    throw new Error(typeof detail === "string" ? detail : "Speech failed");
+  }
+  return res.blob();
+}
+
+async function speak(text, btn = null) {
+  const playing = tts.button === btn && btn !== null;
+  stopSpeaking();
+  if (playing || !text) return; // second click = stop
+  const { engine } = ttsSettings();
+  try {
+    if (engine === "browser") return browserSpeak(text, btn);
+    setSpeakingButton(btn, "⏳");
+    const blob = await fetchSpeech(text);
+    if (btn && tts.button !== btn) return; // user clicked something else meanwhile
+    if (tts.url) URL.revokeObjectURL(tts.url);
+    tts.url = URL.createObjectURL(blob);
+    tts.audio = new Audio(tts.url);
+    tts.audio.onended = () => stopSpeaking();
+    setSpeakingButton(btn, "⏹ Stop");
+    await tts.audio.play();
+  } catch (err) {
+    stopSpeaking();
+    toast(`${err.message} Using the browser voice instead.`, true);
+    try { browserSpeak(text, btn); } catch { /* nothing else to try */ }
+  }
+}
+
+async function downloadSpeech(text, title, btn) {
+  if (ttsSettings().engine === "browser") {
+    return toast("Pick the Gemini or Piper voice in Settings to download audio.", true);
+  }
+  const label = btn.textContent;
+  btn.textContent = "⏳";
+  btn.disabled = true;
+  try {
+    const blob = await fetchSpeech(text);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (title || "speech").replace(/[^\p{L}\p{N} _-]+/gu, "").trim().slice(0, 60) + ".wav";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (err) {
+    toast("Could not create audio: " + err.message, true);
+  } finally {
+    btn.textContent = label;
+    btn.disabled = false;
+  }
 }
 
 // ---------------------------------------------------------------- navigation
@@ -302,7 +384,7 @@ $("micBtn").addEventListener("click", () => {
   live.recording ? stopRecording() : startRecording();
 });
 $("saveBtn").addEventListener("click", saveCurrent);
-$("speakBtn").addEventListener("click", () => speak(currentText()));
+$("speakBtn").addEventListener("click", (e) => speak(currentText(), e.currentTarget));
 $("copyBtn").addEventListener("click", async () => {
   await navigator.clipboard.writeText(currentText());
   toast("Copied");
@@ -378,7 +460,8 @@ function renderList() {
           ${t.duration_seconds ? `<span class="chip">${fmtClock(t.duration_seconds)}</span>` : ""}
           <span class="spacer"></span>
           <button class="btn ghost" data-act="expand">More</button>
-          <button class="btn ghost" data-act="speak">🔊</button>
+          <button class="btn ghost" data-act="speak" title="Listen">🔊</button>
+          <button class="btn ghost" data-act="download" title="Download audio">⬇</button>
           <button class="btn ghost" data-act="copy">Copy</button>
           <button class="btn ghost" data-act="edit">Edit</button>
           <button class="btn ghost danger" data-act="delete">Delete</button>
@@ -403,7 +486,8 @@ $("list").addEventListener("click", async (e) => {
       btn.textContent = p.classList.contains("expanded") ? "Less" : "More";
       break;
     }
-    case "speak": speak(item.text); break;
+    case "speak": speak(item.text, btn); break;
+    case "download": downloadSpeech(item.text, item.title, btn); break;
     case "copy": await navigator.clipboard.writeText(item.text); toast("Copied"); break;
     case "edit": openEditor(item); break;
     case "delete":
@@ -468,6 +552,7 @@ $("settingsBtn").addEventListener("click", () => {
   $("apiKeyInput").value = store.get("gemini_api_key");
   $("modelInput").value = store.get("gemini_model");
   $("modelInput").placeholder = config.engines.gemini?.model || "gemini-3.5-transcribe-live";
+  fillVoiceOptions(store.get("tts_engine", "gemini"), store.get("tts_voice"));
   $("keyHint").textContent = config.engines.gemini?.server_key
     ? "This server already has a Gemini key, so this is optional."
     : "This server has no Gemini key. Add your own to use the Gemini engine.";
@@ -476,8 +561,33 @@ $("settingsBtn").addEventListener("click", () => {
 $("settingsSave").addEventListener("click", () => {
   store.set("gemini_api_key", $("apiKeyInput").value.trim());
   store.set("gemini_model", $("modelInput").value.trim());
+  store.set("tts_engine", $("ttsEngineSelect").value);
+  store.set("tts_voice", $("ttsVoiceSelect").value);
   toast("Settings saved");
   setTimeout(updateEngineHint, 0);
+});
+
+function fillVoiceOptions(engine, selected = "") {
+  const tts = config.tts || {};
+  const engines = $("ttsEngineSelect");
+  if (!tts.piper?.enabled) engines.querySelector('[value="piper"]')?.remove();
+  if (![...engines.options].some((o) => o.value === engine)) engine = "browser";
+  engines.value = engine;
+  const voices = engine === "browser" ? { auto: "Device voice (picked by language)" } : (tts[engine]?.voices || {});
+  $("ttsVoiceSelect").innerHTML = Object.entries(voices)
+    .map(([k, v]) => `<option value="${escapeHtml(k)}">${escapeHtml(v)}</option>`).join("");
+  if (selected && voices[selected]) $("ttsVoiceSelect").value = selected;
+  $("ttsHint").textContent = {
+    gemini: "Natural cloud voices. Hindi, English and mixed text, detected automatically.",
+    piper: "Open-source voices running on this server (Piper). Hindi text uses the voice you pick; English-only text uses an English voice.",
+    browser: "Free voices built into this device. Quality depends on the device and browser.",
+  }[engine];
+}
+$("ttsEngineSelect").addEventListener("change", (e) => fillVoiceOptions(e.target.value));
+$("ttsTestBtn").addEventListener("click", (e) => {
+  store.set("tts_engine", $("ttsEngineSelect").value);
+  store.set("tts_voice", $("ttsVoiceSelect").value);
+  speak("नमस्ते! Kal ki meeting दस बजे है, please late मत होना.", e.currentTarget);
 });
 
 // ---------------------------------------------------------------- boot
